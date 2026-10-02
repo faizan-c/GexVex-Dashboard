@@ -22,7 +22,25 @@ st.title("📊 Institutional Options Heat Engine")
 st.markdown("Query custom ticker assets and explore multi-week structural dealer positioning walls in real-time.")
 
 st.sidebar.header("🎯 Target Selection Controls")
-ticker_options = ["SPY", "QQQ", "IWM", "DIA", "NVDA", "TSLA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD"]
+ticker_options = [
+    # Indices
+    "SPY", "QQQ",
+
+    # MyFavs
+    "CRDO", "AAOI", "CRWV", "NBIS", "LITE",
+
+    # Top Tech & Mega-Caps
+    "NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "TSLA", "AVGO", 
+    "AMD", "NFLX", "PLTR", "INTC", "MU", "QCOM", "ADBE", "CSCO",
+    
+    # High-Volume Growth & Semis
+    "AMAT", "LRCX", "KLAC", "MRVL", "PANW", "CRWD", "TXN", "ADI", 
+    "ASML", "WDC", "STX", "SNPS", "CDNS", "DDOG", "FTNT", "ARM", 
+    
+    # Prominent S&P 500 Consumer, Finance & Industrials
+    "WMT", "COST", "PEP", "SBUX", "BKNG", "MCD", "NKE", "LULU", 
+    "JPM", "BAC", "GS", "MS", "CAT", "GE", "HON", "NOW"
+]
 user_ticker = st.sidebar.selectbox("Select Equity Ticker Symbol:", options=ticker_options, index=0)
 range_slider = st.sidebar.slider("Strike Boundary View Window (%)", min_value=1, max_value=25, value=5)
 
