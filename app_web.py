@@ -18,8 +18,8 @@ from calculations import calculate_exact_dte, black_scholes_gamma, RISK_FREE_RAT
 
 st.set_page_config(page_title="GEX Advanced Analytics Dashboard", layout="wide")
 
-st.title("📊 Institutional Options Heat Engine")
-st.markdown("Query custom ticker assets and explore multi-week structural dealer positioning walls in real-time.")
+# st.title("📊 Institutional Options Heat Engine")
+# st.markdown("Query custom ticker assets and explore multi-week structural dealer positioning walls in real-time.")
 
 st.sidebar.header("🎯 Target Selection Controls")
 ticker_options = [
@@ -41,7 +41,12 @@ ticker_options = [
     "WMT", "COST", "PEP", "SBUX", "BKNG", "MCD", "NKE", "LULU", 
     "JPM", "BAC", "GS", "MS", "CAT", "GE", "HON", "NOW"
 ]
-user_ticker = st.sidebar.selectbox("Select Equity Ticker Symbol:", options=ticker_options, index=0)
+# 1. Filter out 'SPY' and 'QQQ' from the original list, then sort the rest
+remaining_sorted = sorted([t for t in ticker_options if t not in ('SPY', 'QQQ')])
+
+# 2. Put 'SPY' and 'QQQ' at the front, followed by the sorted remaining tickers
+custom_options = ['SPY', 'QQQ'] + remaining_sorted
+user_ticker = st.sidebar.selectbox("Select Equity Ticker Symbol:", options=custom_options, index=0)
 range_slider = st.sidebar.slider("Strike Boundary View Window (%)", min_value=1, max_value=25, value=5)
 
 # DYNAMIC PRICE HIGHWAY TIMELINES DROPDOWN
