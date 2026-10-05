@@ -10,17 +10,46 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt
-import seaborn as sns
-import matplotlib.colors as mcolors
+import plotly.express as px
+import plotly.graph_objects as go
 
 from calculations import calculate_exact_dte, black_scholes_gamma, RISK_FREE_RATE, project_volatility_path
 
 st.set_page_config(page_title="GEX Advanced Analytics Dashboard", layout="wide")
 
-# st.title("📊 Institutional Options Heat Engine")
-# st.markdown("Query custom ticker assets and explore multi-week structural dealer positioning walls in real-time.")
+# ─── PREMIUM CUSTOM CSS DESIGN SYSTEM ───
+st.markdown("""
+    <style>
+    /* Main Background Overrides */
+    .stApp { background-color: #0D1117; }
+    
+    /* Institutional Metric Cards */
+    .metric-card {
+        background-color: #161B22;
+        border: 1px solid #30363D;
+        border-radius: 8px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .metric-label {
+        font-size: 11px;
+        color: #8B949E;
+        text-transform: uppercase;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }
+    .metric-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: #C9D1D9;
+        margin-top: 4px;
+        font-family: monospace;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
+# ─── SIDEBAR ARCHITECTURE CONTROLS ───
 st.sidebar.header("🎯 Target Selection Controls")
 ticker_options = [
     # Indices
@@ -41,31 +70,41 @@ ticker_options = [
     "WMT", "COST", "PEP", "SBUX", "BKNG", "MCD", "NKE", "LULU", 
     "JPM", "BAC", "GS", "MS", "CAT", "GE", "HON", "NOW"
 ]
+
 # 1. Filter out 'SPY' and 'QQQ' from the original list, then sort the rest
 remaining_sorted = sorted([t for t in ticker_options if t not in ('SPY', 'QQQ')])
 
 # 2. Put 'SPY' and 'QQQ' at the front, followed by the sorted remaining tickers
 custom_options = ['SPY', 'QQQ'] + remaining_sorted
-user_ticker = st.sidebar.selectbox("Select Equity Ticker Symbol:", options=custom_options, index=0)
-range_slider = st.sidebar.slider("Strike Boundary View Window (%)", min_value=1, max_value=25, value=5)
 
-# DYNAMIC PRICE HIGHWAY TIMELINES DROPDOWN
-horizon_selection = st.sidebar.selectbox(
-    "Predictive Path Forecast Horizon:",
-    options=[5, 10, 15],
-    format_func=lambda x: f"{x} Days Outlook",
-    index=0
-)
+with st.sidebar:
+    with st.expander("🎯 Target Profiles", expanded=True):
+        user_ticker = st.selectbox("Select Equity Ticker Symbol:", options=custom_options, index=0)
+        range_slider = st.slider("Strike Boundary View Window (%)", min_value=1, max_value=25, value=5)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Liquidity Matrix Engine")
-matrix_mode = st.sidebar.radio(
-    "Choose Active Data Layer:",
-    options=["Open Interest Architecture", "Live Intraday Volume Flows"]
-)
+    # DYNAMIC PRICE HIGHWAY TIMELINES DROPDOWN
+    with st.expander("⏱️ Horizon Settings", expanded=True):
+        horizon_selection = st.selectbox(
+            "Predictive Path Forecast Horizon:",
+            options=[5, 10, 15],
+            format_func=lambda x: f"{x} Days Outlook",
+            index=0
+        )
 
+    st.markdown("---")
+    with st.expander("⚙️ Liquidity Matrix Engine", expanded=True):
+        matrix_mode = st.radio(
+            "Choose Active Data Layer:",
+            options=["Open Interest Architecture", "Live Intraday Volume Flows"]
+        )
+
+# ─── MAIN HEADER DISPLAY LAYER ───
 if user_ticker:
-    with st.spinner(f"Extracting live option matrix records for {user_ticker}..."):
+    st.title("📊 Institutional Options Heat Engine")
+    st.markdown(f"Query custom ticker assets and explore multi-week structural dealer positioning walls for **{user_ticker}** in real-time.")
+    st.markdown("---")
+
+    with st.status(f"Extracting live option matrix records for {user_ticker}...", expanded=False) as status:
         asset = yf.Ticker(user_ticker)
         
         try:
@@ -86,158 +125,200 @@ if user_ticker:
             st.warning(f"No active option chain architectures detected for '{user_ticker}'.")
             st.stop()
 
-        selected_expiries = st.multiselect(
-            "Select Expiration Horizons to Map:",
-            options=expirations,
-            default=expirations[:4]
+        status.update(label="Live Options Chain Retrieved successfully!", state="complete")
+
+    selected_expiries = st.multiselect(
+        "Select Expiration Horizons to Map:",
+        options=expirations,
+        default=expirations[:4]
+    )
+    
+    if not selected_expiries:
+        st.info("Please select at least one expiration date column to map the data matrix layout.")
+        st.stop()
+        
+    all_contracts = []
+    range_pct = range_slider / 100.0
+    data_col = 'openInterest' if matrix_mode == "Open Interest Architecture" else 'volume'
+    
+    for exp in selected_expiries:
+        T = calculate_exact_dte(exp)
+        try: opt_chain = asset.option_chain(exp)
+        except Exception: continue
+        
+        for _, row in opt_chain.calls.iterrows():
+            if pd.isna(row[data_col]) or row[data_col] < 50 or row['volume'] == 0: continue
+            if abs(row['strike'] - spot_price) / spot_price > range_pct: continue 
+            gamma = black_scholes_gamma(spot_price, row['strike'], T, RISK_FREE_RATE, div_yield, row['impliedVolatility'])
+            all_contracts.append({
+                "strike": row['strike'], "expiry": exp, 
+                "gex_m": (row[data_col] * 100 * gamma * spot_price * 0.1) / 1_000_000
+            })
+            
+        for _, row in opt_chain.puts.iterrows():
+            if pd.isna(row[data_col]) or row[data_col] < 50 or row['volume'] == 0: continue
+            if abs(row['strike'] - spot_price) / spot_price > range_pct: continue
+            gamma = black_scholes_gamma(spot_price, row['strike'], T, RISK_FREE_RATE, div_yield, row['impliedVolatility'])
+            all_contracts.append({
+                "strike": row['strike'], "expiry": exp, 
+                "gex_m": (row[data_col] * 100 * gamma * spot_price * -0.1) / 1_000_000
+            })
+
+    if not all_contracts:
+        st.error("No option contracts matched your liquidity flow filters inside this boundary window.")
+    else:
+        df = pd.DataFrame(all_contracts)
+        grid = df.groupby(["strike", "expiry"])["gex_m"].sum().unstack(fill_value=0.0)
+        grid = grid.sort_index(ascending=True)
+
+        total_net_gex_b = (df["gex_m"].sum() * 1_000_000) / 1_000_000_000
+        strike_totals = df.groupby("strike")["gex_m"].sum().reset_index()
+        
+        puts_only = strike_totals[strike_totals["gex_m"] < 0]
+        calls_only = strike_totals[strike_totals["gex_m"] > 0]
+        
+        buy_zone_strike = puts_only.sort_values(by="gex_m").iloc[0]["strike"] if not puts_only.empty else spot_price * 0.98
+        sell_zone_strike = calls_only.sort_values(by="gex_m", ascending=False).iloc[0]["strike"] if not calls_only.empty else spot_price * 1.02
+
+        matrix_totals = strike_totals.copy()
+        matrix_totals['cross_check'] = matrix_totals['gex_m'].shift(1)
+        flip_rows = matrix_totals[((matrix_totals['gex_m'] >= 0) & (matrix_totals['cross_check'] < 0)) | 
+                                  ((matrix_totals['gex_m'] < 0) & (matrix_totals['cross_check'] >= 0))]
+        
+        if not flip_rows.empty:
+            gamma_flip_strike = flip_rows.iloc[(flip_rows['strike'] - spot_price).abs().argsort()[:1]]["strike"].values[0]
+        else:
+            gamma_flip_strike = None
+
+        # ─── METRIC CARD LAYOUT ENGINE ───
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.markdown(f'<div class="metric-card"><div class="metric-label">Spot Price</div><div class="metric-value">${spot_price:.2f}</div></div>', unsafe_allow_html=True)
+        with col2:
+            gex_color = "#22C55E" if total_net_gex_b >= 0 else "#EF4444"
+            gex_txt = "🟢 Long Gamma" if total_net_gex_b >= 0 else "🔴 Short Gamma"
+            st.markdown(f'<div class="metric-card" title="{gex_txt}"><div class="metric-label">Total Net GEX</div><div class="metric-value" style="color: {gex_color};">{total_net_gex_b:+.3f}B</div></div>', unsafe_allow_html=True)
+        with col3:
+            st.markdown(f'<div class="metric-card"><div class="metric-label">🔵 BUY FLOOR</div><div class="metric-value" style="color: #52B788;">${buy_zone_strike:.1f}</div></div>', unsafe_allow_html=True)
+        with col4:
+            st.markdown(f'<div class="metric-card"><div class="metric-label">🟢 SELL CEILING</div><div class="metric-value" style="color: #4EA8DE;">${sell_zone_strike:.1f}</div></div>', unsafe_allow_html=True)
+        with col5:
+            flip_text = f"${gamma_flip_strike:.1f}" if gamma_flip_strike else "N/A"
+            st.markdown(f'<div class="metric-card"><div class="metric-label">Gamma Flip</div><div class="metric-value" style="color: #FF007F;">{flip_text}</div></div>', unsafe_allow_html=True)
+        
+        st.markdown("---")
+
+        # ─── INTERACTIVE PLOTLY HEATMAP ENGINE (CUSTOM DARK TERMINAL PALETTE) ───
+        max_val = max(abs(grid.values.min()), abs(grid.values.max()), 1.0)
+        
+        # Custom high-contrast dark palette: Negative is Red, Zero is Dark Slate, Positive is Blue
+        dark_terminal_cmap = [
+            [0.0, "#FF4444"],   # Max Negative Gamma = Bright Red
+            [0.4, "#8B2626"],   # Low Negative Gamma = Dark Red
+            [0.5, "#161B22"],   # Zero Neutral Gamma = Dark Slate Background
+            [0.6, "#0F4C81"],   # Low Positive Gamma = Dark Blue
+            [1.0, "#00E5FF"]    # Max Positive Gamma = Electric Cyan/Blue
+        ]
+        
+        fig_heatmap = px.imshow(
+            grid,
+            labels=dict(x="Expiration Date", y="Strike Price ($)", color="GEX ($M)"),
+            x=grid.columns,
+            y=grid.index,
+            color_continuous_scale=dark_terminal_cmap,
+            color_continuous_midpoint=0.0,
+            range_color=[-max_val, max_val],
+            text_auto=".1f",
+            aspect="auto"
         )
         
-        if not selected_expiries:
-            st.info("Please select at least one expiration date column to map the data matrix layout.")
-            st.stop()
-            
-        all_contracts = []
-        range_pct = range_slider / 100.0
-        data_col = 'openInterest' if matrix_mode == "Open Interest Architecture" else 'volume'
+        fig_heatmap.update_layout(
+            paper_bgcolor="#0D1117",  
+            plot_bgcolor="#0D1117",   
+            xaxis=dict(
+                side="top", 
+                tickangle=15, 
+                title=None, 
+                gridcolor="#21262D",   # Dark subtle grid lines
+                zerolinecolor="#21262D",
+                tickfont=dict(color="#C9D1D9", size=11, weight="bold")
+            ),
+            yaxis=dict(
+                title=dict(text="Option Strike Values ($)", font=dict(color="#8B949E", size=12)), 
+                gridcolor="#21262D",   
+                zerolinecolor="#21262D",
+                tickformat=".1f",
+                tickfont=dict(color="#C9D1D9", size=11, weight="bold"),
+                autorange=True
+            ),
+            coloraxis_colorbar=dict(
+                title=dict(text="Gamma ($M)", font=dict(color="#C9D1D9")),
+                tickfont=dict(color="#C9D1D9"),
+                bgcolor="#0D1117"
+            ),
+            margin=dict(l=90, r=90, t=80, b=50),
+            height=max(550, len(grid) * 26)
+        )
         
-        for exp in selected_expiries:
-            T = calculate_exact_dte(exp)
-            try: opt_chain = asset.option_chain(exp)
-            except Exception: continue
-            
-            for _, row in opt_chain.calls.iterrows():
-                if pd.isna(row[data_col]) or row[data_col] < 50 or row['volume'] == 0: continue
-                if abs(row['strike'] - spot_price) / spot_price > range_pct: continue 
-                gamma = black_scholes_gamma(spot_price, row['strike'], T, RISK_FREE_RATE, div_yield, row['impliedVolatility'])
-                all_contracts.append({
-                    "strike": row['strike'], "expiry": exp, 
-                    "gex_m": (row[data_col] * 100 * gamma * spot_price * 0.1) / 1_000_000
-                })
-                
-            for _, row in opt_chain.puts.iterrows():
-                if pd.isna(row[data_col]) or row[data_col] < 50 or row['volume'] == 0: continue
-                if abs(row['strike'] - spot_price) / spot_price > range_pct: continue
-                gamma = black_scholes_gamma(spot_price, row['strike'], T, RISK_FREE_RATE, div_yield, row['impliedVolatility'])
-                all_contracts.append({
-                    "strike": row['strike'], "expiry": exp, 
-                    "gex_m": (row[data_col] * 100 * gamma * spot_price * -0.1) / 1_000_000
-                })
+        # Now white text will beautifully pop on the dark background cells!
+        fig_heatmap.update_traces(
+            textfont=dict(size=11, weight="bold", color="#FFFFFF"),
+            hovertemplate="Strike: %{y}<br>Expiry: %{x}<br>Gamma Position: %{z:.2f}M<extra></extra>"
+        )
+        
+        # Find closest strike to spot to outline it cleanly
+        strike_array = np.array(grid.index)
+        closest_strike = strike_array[(np.abs(strike_array - spot_price)).argsort()][0]  # Extraction fixed here
+        
+        # Add premium thick horizontal indicator anchors
+        fig_heatmap.add_hline(y=closest_strike, line_color="#FFD700", line_width=3, 
+                                annotation_text="★ SPOT LEVEL", annotation_position="left", annotation_font=dict(color="#FFD700", size=12, weight="bold"))
+        
+        if gamma_flip_strike and gamma_flip_strike in grid.index:
+            fig_heatmap.add_hline(y=gamma_flip_strike, line_color="#FF007F", line_width=2.5, line_dash="dash", 
+                                    annotation_text="GAMMA FLIP", annotation_position="right", annotation_font=dict(color="#FF007F", size=11, weight="bold"))
+        if buy_zone_strike in grid.index:
+            fig_heatmap.add_hline(y=buy_zone_strike, line_color="#52B788", line_width=2.5, 
+                                    annotation_text="⬅️ BUY FLOOR", annotation_position="right", annotation_font=dict(color="#52B788", size=11, weight="bold"))
+        if sell_zone_strike in grid.index:
+            fig_heatmap.add_hline(y=sell_zone_strike, line_color="#4EA8DE", line_width=2.5, 
+                                    annotation_text="⬅️ SELL CEILING", annotation_position="right", annotation_font=dict(color="#4EA8DE", size=11, weight="bold"))
 
-        if not all_contracts:
-            st.error("No option contracts matched your liquidity flow filters inside this boundary window.")
-        else:
-            df = pd.DataFrame(all_contracts)
-            grid = df.groupby(["strike", "expiry"])["gex_m"].sum().unstack(fill_value=0.0)
-            grid = grid.sort_index(ascending=False)
-
-            total_net_gex_b = (df["gex_m"].sum() * 1_000_000) / 1_000_000_000
-            strike_totals = df.groupby("strike")["gex_m"].sum().reset_index()
-            
-            puts_only = strike_totals[strike_totals["gex_m"] < 0]
-            calls_only = strike_totals[strike_totals["gex_m"] > 0]
-            
-            # 🔥 FIXED: Explicit positional .iloc[0] placement used below to resolve key indexing errors
-            buy_zone_strike = puts_only.sort_values(by="gex_m").iloc[0]["strike"] if not puts_only.empty else spot_price * 0.98
-            sell_zone_strike = calls_only.sort_values(by="gex_m", ascending=False).iloc[0]["strike"] if not calls_only.empty else spot_price * 1.02
-
-            matrix_totals = strike_totals.copy()
-            matrix_totals['cross_check'] = matrix_totals['gex_m'].shift(1)
-            flip_rows = matrix_totals[((matrix_totals['gex_m'] >= 0) & (matrix_totals['cross_check'] < 0)) | 
-                                      ((matrix_totals['gex_m'] < 0) & (matrix_totals['cross_check'] >= 0))]
-            
-            if not flip_rows.empty:
-                gamma_flip_strike = flip_rows.iloc[(flip_rows['strike'] - spot_price).abs().argsort()[:1]]["strike"].values[0]
-            else:
-                gamma_flip_strike = None
-
-            col1, col2, col3, col4, col5 = st.columns(5)
-            col1.metric("Spot Price", f"${spot_price:.2f}")
-            
-            gex_label = "🟢 Long Gamma" if total_net_gex_b >= 0 else "🔴 Short Gamma"
-            col2.metric("Total Net GEX", f"{total_net_gex_b:+.3f}B", help=gex_label)
-            col3.metric("🔵 INSTITUTIONAL BUY ZONE", f"${buy_zone_strike:.1f}")
-            col4.metric("🟢 TAKE PROFIT / SELL ZONE", f"${sell_zone_strike:.1f}")
-            
-            flip_text = f"${gamma_flip_strike:.1f}" if gamma_flip_strike else "N/A"
-            col5.metric("Gamma Flip", flip_text)
-            st.markdown("---")
-
-            fig, ax = plt.subplots(figsize=(14, max(9, len(grid) * 0.36)), facecolor='#0D1117')
-            ax.set_facecolor('#0D1117')
-
-            colors_step = ["#D9381E", "#161B22", "#1E6091"]
-            cmap = mcolors.LinearSegmentedColormap.from_list("HighContrastGEX", colors_step, N=256)
-
-            max_val = max(abs(grid.values.min()), abs(grid.values.max()), 1.0)
-            sns.heatmap(
-                grid, annot=True, fmt=".1f", cmap=cmap, center=0.0, vmin=-max_val, vmax=max_val,
-                cbar_kws={'label': 'Dealer Gamma Profile (Millions $)'},
-                linewidths=1.0, linecolor='#0D1117',
-                annot_kws={"size": 10, "weight": "bold"}, ax=ax
-            )
-
-            for i in range(grid.shape[0]):
-                for j in range(grid.shape[1]):
-                    val = grid.values[i, j]
-                    cell_text = ax.texts[i * grid.shape[1] + j]
-                    if val > 0.5 or val < -0.5: cell_text.set_color('#FFFFFF')
-                    else: cell_text.set_color('#484F58')
-
-            strike_array = np.array(grid.index)
-            closest_strike = strike_array[(np.abs(strike_array - spot_price)).argsort()][0]
-            spot_idx = list(grid.index).index(closest_strike)
-
-            ax.add_patch(plt.Rectangle((0, spot_idx), len(grid.columns), 1, fill=False, edgecolor='#FFD700', lw=4.0, zorder=5))
-
-            if gamma_flip_strike and gamma_flip_strike in grid.index:
-                flip_idx = list(grid.index).index(gamma_flip_strike)
-                ax.axhline(flip_idx + 0.5, color='#FF007F', linestyle='--', lw=3.0, label='Gamma Flip Level', zorder=6)
-
-            if buy_zone_strike in grid.index:
-                b_idx = list(grid.index).index(buy_zone_strike)
-                ax.text(len(grid.columns) + 0.1, b_idx + 0.6, "⬅️ BUY FLOOR", color='#52B788', weight='bold', fontsize=11, va='center')
-                
-            if sell_zone_strike in grid.index:
-                s_idx = list(grid.index).index(sell_zone_strike)
-                ax.text(len(grid.columns) + 0.1, s_idx + 0.6, "⬅️ SELL CEILING", color='#4EA8DE', weight='bold', fontsize=11, va='center')
-
-            ax.tick_params(colors='#FFFFFF', which='both', labelsize=11)
-            ax.set_yticklabels([f"{float(label.get_text()):.1f}" for label in ax.get_yticklabels()], rotation=0)
-            ax.xaxis.tick_top()
-            ax.xaxis.set_label_position('top')
-            plt.xticks(rotation=15, ha='left')
-            plt.ylabel("Option Strike Values ($)", fontsize=12, color='#8B949E')
-            plt.xlabel(f"Selected Expiration Horizons Matrix Layer ({matrix_mode})", fontsize=12, color='#8B949E', labelpad=15)
-            
-            if len(ax.collections) > 0:
-                heatmap_obj = ax.collections[0]
-                if hasattr(heatmap_obj, 'colorbar') and heatmap_obj.colorbar:
-                    heatmap_obj.colorbar.ax.yaxis.set_tick_params(color='white', labelcolor='white')
-
-            st.pyplot(fig)
-
-            # ─── VOLATILITY PATH TRAJECTORY FORECASTER ───
-            st.markdown(f"### 🗺️ Future Volatility Path Estimator ({horizon_selection}-Day Trajectory)")
-            st.markdown("This line matrix graphs the highest-probability paths for the asset based on option-implied volatility models.")
-
-            try:
-                t_symbol = "^VXN" if user_ticker == "QQQ" else "^VIX"
-                vix_close = yf.Ticker(t_symbol).history(period="1d")["Close"].iloc[-1] / 100
-            except Exception:
-                vix_close = 0.16
-            daily_move = spot_price * (vix_close / np.sqrt(252))
-            # Pass our active 'horizon_selection' choice directly to the mapping engine
-            path_df = project_volatility_path(spot_price, daily_move, buy_zone_strike, sell_zone_strike, gamma_flip_strike, horizon_days=horizon_selection)
-            fig_path, ax_path = plt.subplots(figsize=(14, 5), facecolor='#0D1117')
-            ax_path.set_facecolor('#0D1117')
-            ax_path.plot(path_df["Horizon"], path_df["Bullish Path Target"], color='#1E6091', linestyle=':', lw=2, label='Maximum Upside Breakout Route')
-            ax_path.plot(path_df["Horizon"], path_df["Pinned Path Upper"], color='#22C55E', lw=3, label='Standard Expected Ceiling (Pinned Track)')
-            ax_path.plot(path_df["Horizon"], path_df["Pinned Path Lower"], color='#EF4444', lw=3, label='Standard Expected Floor (Pinned Track)')
-            ax_path.plot(path_df["Horizon"], path_df["Bearish Cascade Target"], color='#D9381E', linestyle=':', lw=2, label='Maximum Volatility Cascade Breakdown')
-            ax_path.axhline(spot_price, color='#FFD700', linestyle='-', lw=1, alpha=0.5, label='Current Entry Spot Price')
-            ax_path.set_title(f"{user_ticker} {horizon_selection}-DAY EXPECTED VOLATILITY TRAJECTORY HIGHWAY", color='white', fontsize=12, pad=15, weight='bold')
-            ax_path.tick_params(colors='white', which='both', labelsize=10)
-            ax_path.set_ylabel("Projected Asset Price ($)", color='#8B949E')
-            ax_path.grid(color='#1E293B', linestyle='--', alpha=0.5)
-            legend = ax_path.legend(facecolor='#0D1117', edgecolor='#1E293B', labelcolor='white', loc='upper left', fontsize=9)
-            st.pyplot(fig_path)
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+        
+        # ─── INTERACTIVE VOLATILITY PATH FORECASTER ───
+        st.markdown(f"### 🗺️ Future Volatility Path Estimator ({horizon_selection}-Day Trajectory)")
+        st.markdown("This line matrix graphs the highest-probability paths for the asset based on option-implied volatility models.")
+        
+        try:
+            t_symbol = "^VXN" if user_ticker == "QQQ" else "^VIX"
+            vix_close = yf.Ticker(t_symbol).history(period="1d")["Close"].iloc[-1] / 100
+        except Exception:
+            vix_close = 0.16
+        
+        daily_move = spot_price * (vix_close / np.sqrt(252))
+        path_df = project_volatility_path(spot_price, daily_move, buy_zone_strike, sell_zone_strike, gamma_flip_strike, horizon_days=horizon_selection)
+        fig_path = go.Figure()
+        fig_path.add_trace(go.Scatter(x=path_df["Horizon"], y=path_df["Bullish Path Target"], name="Maximum Upside Breakout Route", line=dict(color='#1E6091', dash='dot')))
+        fig_path.add_trace(go.Scatter(x=path_df["Horizon"], y=path_df["Pinned Path Upper"], name="Standard Expected Ceiling (Pinned Track)", line=dict(color='#22C55E', width=3)))
+        fig_path.add_trace(go.Scatter(x=path_df["Horizon"], y=path_df["Pinned Path Lower"], name="Standard Expected Floor (Pinned Track)", line=dict(color='#EF4444', width=3)))
+        fig_path.add_trace(go.Scatter(x=path_df["Horizon"], y=path_df["Bearish Cascade Target"], name="Maximum Volatility Cascade Breakdown", line=dict(color='#D9381E', dash='dot')))
+        fig_path.add_hline(y=spot_price, line_color="#FFD700", line_width=1.5, annotation_text="Current Entry Spot Price", annotation_position="left", annotation_font=dict(color="#FFD700"))
+        fig_path.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0D1117",
+            plot_bgcolor="#0D1117",
+            title=dict(
+            text=f"{user_ticker} {horizon_selection}-DAY EXPECTED VOLATILITY TRAJECTORY HIGHWAY",
+            font=dict(size=14, weight="bold")
+            ),
+            xaxis=dict(gridcolor="#1F2937"),
+            yaxis=dict(
+            title=dict(text="Projected Asset Price ($)", font=dict(color="#8B949E")),
+            gridcolor="#1F2937"
+            ),
+            margin=dict(l=50, r=50, t=60, b=50),
+            height=450,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_path, use_container_width=True)
