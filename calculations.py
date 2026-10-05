@@ -19,13 +19,11 @@ def black_scholes_gamma(S, K, T, r, q, sigma):
     d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     return (np.exp(-q * T) * norm.pdf(d1)) / (S * sigma * np.sqrt(T))
 
-# UPGRADED: Added a variable horizon parameter (defaulting to 5 days)
 def project_volatility_path(spot_price, daily_move, buy_zone, sell_zone, gamma_flip, horizon_days=5):
     """
     Builds a predictive multi-day horizon data mapping path
     using institutional friction boundaries.
     """
-    # Dynamically generate timeline intervals based on selection
     days = ["Today"] + [f"Day {i}" for i in range(2, horizon_days + 1)]
     time_steps = np.sqrt(np.arange(1, horizon_days + 1))
     
@@ -33,11 +31,9 @@ def project_volatility_path(spot_price, daily_move, buy_zone, sell_zone, gamma_f
     for idx, day in enumerate(days):
         step = time_steps[idx]
         
-        # Calculate standard mathematical volatility standard deviations drift path
         upper_band = spot_price + (daily_move * step)
         lower_band = spot_price - (daily_move * step)
         
-        # Apply dealer structural wall pinning friction limits
         pinned_upper = min(upper_band, sell_zone) if sell_zone else upper_band
         pinned_lower = max(lower_band, buy_zone) if buy_zone else lower_band
         
